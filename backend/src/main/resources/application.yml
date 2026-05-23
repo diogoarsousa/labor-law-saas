@@ -1,0 +1,109 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: doutor-trabalho-backend
+  threads:
+    virtual:
+      enabled: true
+
+  # PostgreSQL
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/doutortrabalho}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        default_schema: public
+    show-sql: false
+
+  # Redis
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+
+  # Spring AI - Anthropic (Claude)
+  ai:
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      chat:
+        options:
+          model: claude-sonnet-4-6
+          max-tokens: 4096
+          temperature: 0.3
+    # Spring AI - OpenAI (Embeddings only)
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      embedding:
+        options:
+          model: text-embedding-3-small
+    # pgvector store
+    vectorstore:
+      pgvector:
+        dimensions: 1536
+        distance-type: COSINE_DISTANCE
+        index-type: HNSW
+        schema-name: public
+        table-name: vector_store
+        initialize-schema: false
+
+  # Security - OAuth2 Resource Server
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_AUTH_SERVER_URL:http://localhost:8180}/realms/${KEYCLOAK_REALM:doutor-trabalho}
+
+# Actuator & Metrics
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# OpenAPI / Swagger
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: method
+
+# Application-specific
+app:
+  base-url: ${APP_BASE_URL:http://localhost:8080}
+  cors:
+    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:3000}
+  legal-qa:
+    max-history-messages: 10
+    rag:
+      top-k: 20
+      similarity-threshold: 0.7
+    rate-limit:
+      free-tier-per-hour: 50
+
+logging:
+  level:
+    pt.doutortrabalho: DEBUG
+    org.springframework.ai: DEBUG
+    org.springframework.security: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

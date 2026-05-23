@@ -1,8 +1,8 @@
-# Labor Law SaaS — Project Context
+# Labor Law SaaS -- Project Context
 
 ## What we are building
 A B2B SaaS platform that helps Portuguese HR teams, employment lawyers and workers 
-navigate and apply Portuguese labor law (Código do Trabalho).
+navigate and apply Portuguese labor law (Codigo do Trabalho).
 Core features:
 - AI-powered legal Q&A
 - Contract analysis
@@ -25,10 +25,10 @@ Core features:
 ## Law corpus
 
 ### Primary Sources
-- Código do Trabalho (Lei n.º 7/2009)
+- Codigo do Trabalho (Lei n.o 7/2009)
 - Portarias
 - Decretos-Lei
-- Diário da República Eletrónico (DRE)
+- Diario da Republica Eletronico (DRE)
 
 ---
 
@@ -44,7 +44,7 @@ Core features:
 - API follows REST with versioning: /api/v1/doutor-trabalho/...
 - All endpoints require authentication
 - Tests: JUnit 5 + Mockito, minimum 80% coverage
-- Git branching: main → develop → feature/xxx
+- Git branching: main -> develop -> feature/xxx
 - OpenAPI/Swagger documentation
 - JWT authentication
 - Hexagonal architecture

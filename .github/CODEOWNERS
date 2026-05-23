@@ -1,0 +1,14 @@
+# Default owner for everything in the repo
+* @diogoarsousa
+
+# Backend
+/backend/ @diogoarsousa
+
+# Frontend
+/frontend/ @diogoarsousa
+
+# Architecture decisions
+/docs/architecture/ @diogoarsousa
+
+# Infrastructure
+/infra/ @diogoarsousa

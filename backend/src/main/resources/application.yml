@@ -33,21 +33,21 @@ spring:
       host: ${SPRING_REDIS_HOST:localhost}
       port: ${SPRING_REDIS_PORT:6379}
 
-  # Spring AI - Anthropic (Claude)
+  # Spring AI - Azure OpenAI (chat + embeddings)
   ai:
-    anthropic:
-      api-key: ${ANTHROPIC_API_KEY:}
-      chat:
-        options:
-          model: claude-sonnet-4-6
-          max-tokens: 4096
-          temperature: 0.3
-    # Spring AI - OpenAI (Embeddings only)
-    openai:
-      api-key: ${OPENAI_API_KEY:}
-      embedding:
-        options:
-          model: text-embedding-3-small
+    azure:
+      openai:
+        endpoint: ${AZURE_OPENAI_ENDPOINT}
+        api-key: ${AZURE_OPENAI_API_KEY}
+        chat:
+          options:
+            deployment-name: ${AZURE_OPENAI_CHAT_DEPLOYMENT:gpt-4.1-nano}
+            model-version: ${AZURE_OPENAI_CHAT_MODEL_VERSION:2025-04-14}
+            temperature: 0.3
+            max-tokens: 4096
+        embedding:
+          options:
+            deployment-name: ${AZURE_OPENAI_EMBEDDING_DEPLOYMENT:text-embedding-3-small}
     # pgvector store
     vectorstore:
       pgvector:

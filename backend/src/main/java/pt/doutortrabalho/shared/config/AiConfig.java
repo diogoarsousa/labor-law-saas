@@ -1,32 +1,14 @@
 package pt.doutortrabalho.shared.config;
 
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.client.advisor.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.memory.InMemoryChatMemory;
-import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import pt.doutortrabalho.legalqa.infrastructure.adapter.out.ai.LaborLawCalculatorTools;
 
-/**
- * Spring AI configuration for the Legal Q&A bounded context.
- * Configures the ChatClient with RAG advisors, memory, and tool calling.
- */
 @Configuration
 public class AiConfig {
-
-    @Value("${app.legal-qa.max-history-messages:10}")
-    private int maxHistoryMessages;
-
-    @Value("${app.legal-qa.rag.top-k:20}")
-    private int topK;
-
-    @Value("${app.legal-qa.rag.similarity-threshold:0.7}")
-    private double similarityThreshold;
 
     private static final String LEGAL_QA_SYSTEM_PROMPT = """
             You are Doutor do Trabalho, an expert AI assistant specializing in Portuguese Labor Law
@@ -59,26 +41,13 @@ public class AiConfig {
 
     @Bean
     public ChatMemory chatMemory() {
-        return new InMemoryChatMemory();
+        return MessageWindowChatMemory.builder().maxMessages(100).build();
     }
 
     @Bean("legalQaChatClient")
-    public ChatClient legalQaChatClient(
-            ChatClient.Builder builder,
-            VectorStore vectorStore,
-            ChatMemory chatMemory) {
-
-        SearchRequest searchRequest = SearchRequest.builder()
-                .topK(topK)
-                .similarityThreshold(similarityThreshold)
-                .build();
-
+    public ChatClient legalQaChatClient(ChatClient.Builder builder) {
         return builder
                 .defaultSystem(LEGAL_QA_SYSTEM_PROMPT)
-                .defaultAdvisors(
-                        new MessageChatMemoryAdvisor(chatMemory, maxHistoryMessages),
-                        new QuestionAnswerAdvisor(vectorStore, searchRequest)
-                )
                 .defaultTools(new LaborLawCalculatorTools())
                 .build();
     }

@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Doutor Trabalho - Local",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "doutortrabalho",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/dev/null"
+    }
+  }
+}

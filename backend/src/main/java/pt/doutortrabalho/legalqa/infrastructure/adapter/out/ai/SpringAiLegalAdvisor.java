@@ -4,8 +4,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import pt.doutortrabalho.legalqa.application.dto.LegalAnswerResponse;
 import pt.doutortrabalho.legalqa.domain.port.out.AiLegalAdvisor;
@@ -13,20 +18,30 @@ import pt.doutortrabalho.legalqa.domain.port.out.AiLegalAdvisor;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
-/**
- * Infrastructure adapter that bridges the domain port to Spring AI ChatClient.
- * Uses the pre-configured legalQaChatClient with RAG advisors and tool calling.
- */
 @Component
 public class SpringAiLegalAdvisor implements AiLegalAdvisor {
 
     private static final Logger log = LoggerFactory.getLogger(SpringAiLegalAdvisor.class);
 
     private final ChatClient chatClient;
+    private final ChatMemory chatMemory;
+    private final VectorStore vectorStore;
 
-    public SpringAiLegalAdvisor(@Qualifier("legalQaChatClient") ChatClient chatClient) {
+    @Value("${app.legal-qa.rag.top-k:20}")
+    private int topK;
+
+    @Value("${app.legal-qa.rag.similarity-threshold:0.7}")
+    private double similarityThreshold;
+
+    public SpringAiLegalAdvisor(
+            @Qualifier("legalQaChatClient") ChatClient chatClient,
+            ChatMemory chatMemory,
+            VectorStore vectorStore) {
         this.chatClient = chatClient;
+        this.chatMemory = chatMemory;
+        this.vectorStore = vectorStore;
     }
 
     @Override
@@ -36,11 +51,31 @@ public class SpringAiLegalAdvisor implements AiLegalAdvisor {
 
         long startTime = System.currentTimeMillis();
 
+        // RAG: retrieve relevant legal documents from pgvector
+        List<Document> relevantDocs = vectorStore.similaritySearch(
+                SearchRequest.builder()
+                        .query(question)
+                        .topK(topK)
+                        .similarityThreshold(similarityThreshold)
+                        .build());
+
+        String ragContext = relevantDocs.stream()
+                .map(Document::getText)
+                .filter(text -> text != null && !text.isBlank())
+                .collect(Collectors.joining("\n\n---\n\n"));
+
+        String userMessage = ragContext.isEmpty() ? question :
+                "CONTEXTO LEGAL:\n" + ragContext + "\n\nPERGUNTA:\n" + question;
+
+        log.debug("RAG retrieved {} documents for sessionId={}", relevantDocs.size(), sessionId);
+
         ChatResponse chatResponse = chatClient.prompt()
-                .advisors(advisorSpec -> advisorSpec.param(
-                        MessageChatMemoryAdvisor.CHAT_MEMORY_CONVERSATION_ID_KEY,
-                        sessionId.toString()))
-                .user(question)
+                .advisors(
+                        MessageChatMemoryAdvisor.builder(chatMemory)
+                                .conversationId(sessionId.toString())
+                                .build()
+                )
+                .user(userMessage)
                 .call()
                 .chatResponse();
 
@@ -48,7 +83,6 @@ public class SpringAiLegalAdvisor implements AiLegalAdvisor {
 
         String answer = chatResponse.getResult().getOutput().getText();
 
-        // Extract token usage from the response metadata
         Integer tokensInput = null;
         Integer tokensOutput = null;
         if (chatResponse.getMetadata() != null && chatResponse.getMetadata().getUsage() != null) {
@@ -57,17 +91,15 @@ public class SpringAiLegalAdvisor implements AiLegalAdvisor {
             tokensOutput = (int) usage.getCompletionTokens();
         }
 
-        log.info("AI response received: sessionId={}, latency={}ms, tokensIn={}, tokensOut={}",
-                sessionId, latencyMs, tokensInput, tokensOutput);
+        log.info("AI response received: sessionId={}, latency={}ms, tokensIn={}, tokensOut={}, ragDocs={}",
+                sessionId, latencyMs, tokensInput, tokensOutput, relevantDocs.size());
 
-        // For MVP, citations are extracted from the answer text.
-        // A dedicated CitationExtractionAdvisor will be added in a future sprint.
         return new LegalAnswerResponse(
                 sessionId,
-                null, // exchangeId is assigned after persistence
+                null,
                 question,
                 answer,
-                List.of(), // Citations to be extracted by post-processing
+                List.of(),
                 new LegalAnswerResponse.AnswerMetadata(
                         tokensInput, tokensOutput, latencyMs, Instant.now()));
     }

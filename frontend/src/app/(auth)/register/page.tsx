@@ -10,43 +10,31 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { register as doRegister } from "@/lib/auth";
 import { toast } from "@/hooks/use-toast";
-import type { UserPerfil } from "@/lib/api/types";
 
-const registerSchema = z.object({
-  nome: z.string().min(2, "O nome deve ter pelo menos 2 caracteres"),
-  email: z
-    .string()
-    .min(1, "O e-mail é obrigatório")
-    .email("Introduza um e-mail válido"),
-  password: z
-    .string()
-    .min(8, "A palavra-passe deve ter pelo menos 8 caracteres")
-    .regex(/[A-Z]/, "Deve conter pelo menos uma letra maiúscula")
-    .regex(/[0-9]/, "Deve conter pelo menos um número"),
-  confirmPassword: z.string(),
-  empresa: z.string().optional(),
-  perfil: z.enum(["HR", "ADVOGADO", "TRABALHADOR"] as const),
-}).refine((d) => d.password === d.confirmPassword, {
-  message: "As palavras-passe não coincidem",
-  path: ["confirmPassword"],
-});
+const registerSchema = z
+  .object({
+    firstName: z.string().min(2, "O primeiro nome deve ter pelo menos 2 caracteres"),
+    lastName: z.string().min(2, "O último nome deve ter pelo menos 2 caracteres"),
+    email: z
+      .string()
+      .min(1, "O e-mail é obrigatório")
+      .email("Introduza um e-mail válido"),
+    password: z
+      .string()
+      .min(8, "A palavra-passe deve ter pelo menos 8 caracteres")
+      .regex(/[A-Z]/, "Deve conter pelo menos uma letra maiúscula")
+      .regex(/[0-9]/, "Deve conter pelo menos um número"),
+    confirmPassword: z.string(),
+    organizationName: z.string().optional(),
+  })
+  .refine((d) => d.password === d.confirmPassword, {
+    message: "As palavras-passe não coincidem",
+    path: ["confirmPassword"],
+  });
 
 type RegisterFormData = z.infer<typeof registerSchema>;
-
-const perfilLabels: Record<string, string> = {
-  HR: "Recursos Humanos",
-  ADVOGADO: "Advogado(a)",
-  TRABALHADOR: "Trabalhador(a)",
-};
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -55,23 +43,25 @@ export default function RegisterPage() {
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { perfil: "HR" },
   });
 
   const onSubmit = async (data: RegisterFormData) => {
     try {
       await doRegister({
-        nome: data.nome,
+        firstName: data.firstName,
+        lastName: data.lastName,
         email: data.email,
         password: data.password,
-        empresa: data.empresa,
-        perfil: data.perfil as UserPerfil,
+        organizationName: data.organizationName,
       });
-      router.push("/dashboard");
+      toast({
+        title: "Conta criada com sucesso",
+        description: "Pode agora iniciar sessão com as suas credenciais.",
+      });
+      router.push("/login");
     } catch {
       toast({
         variant: "destructive",
@@ -90,12 +80,21 @@ export default function RegisterPage() {
 
       <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {/* Nome */}
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="nome">Nome completo</Label>
-            <Input id="nome" placeholder="Ana Silva" {...register("nome")} />
-            {errors.nome && (
-              <p className="text-xs text-destructive">{errors.nome.message}</p>
+          {/* Primeiro nome */}
+          <div className="space-y-1.5">
+            <Label htmlFor="firstName">Primeiro nome</Label>
+            <Input id="firstName" placeholder="Ana" {...register("firstName")} />
+            {errors.firstName && (
+              <p className="text-xs text-destructive">{errors.firstName.message}</p>
+            )}
+          </div>
+
+          {/* Último nome */}
+          <div className="space-y-1.5">
+            <Label htmlFor="lastName">Último nome</Label>
+            <Input id="lastName" placeholder="Silva" {...register("lastName")} />
+            {errors.lastName && (
+              <p className="text-xs text-destructive">{errors.lastName.message}</p>
             )}
           </div>
 
@@ -113,39 +112,16 @@ export default function RegisterPage() {
             )}
           </div>
 
-          {/* Perfil */}
-          <div className="space-y-1.5">
-            <Label htmlFor="perfil">Perfil</Label>
-            <Select
-              defaultValue="HR"
-              onValueChange={(v) => setValue("perfil", v as RegisterFormData["perfil"])}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione o perfil" />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(perfilLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.perfil && (
-              <p className="text-xs text-destructive">{errors.perfil.message}</p>
-            )}
-          </div>
-
-          {/* Empresa */}
-          <div className="space-y-1.5">
-            <Label htmlFor="empresa">
-              Empresa{" "}
+          {/* Organização */}
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="organizationName">
+              Organização{" "}
               <span className="text-slate-400 font-normal">(opcional)</span>
             </Label>
             <Input
-              id="empresa"
+              id="organizationName"
               placeholder="Empresa Lda."
-              {...register("empresa")}
+              {...register("organizationName")}
             />
           </div>
 
@@ -177,7 +153,7 @@ export default function RegisterPage() {
             )}
           </div>
 
-          {/* Confirm Password */}
+          {/* Confirmar password */}
           <div className="space-y-1.5">
             <Label htmlFor="confirmPassword">Confirmar palavra-passe</Label>
             <Input

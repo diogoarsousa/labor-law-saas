@@ -60,18 +60,18 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             <ul className="space-y-1">
               {message.citacoes.map((cit, i) => (
                 <li key={i} className="text-xs">
-                  {cit.url ? (
+                  {cit.sourceUrl ? (
                     <a
-                      href={cit.url}
+                      href={cit.sourceUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-indigo-600 hover:underline"
                     >
-                      {cit.diploma} — {cit.artigo}
+                      {cit.lawNumber} — {cit.article}
                     </a>
                   ) : (
                     <span className="text-slate-600">
-                      {cit.diploma} — {cit.artigo}
+                      {cit.lawNumber} — {cit.article}
                     </span>
                   )}
                 </li>

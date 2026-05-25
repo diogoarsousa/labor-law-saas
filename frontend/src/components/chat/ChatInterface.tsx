@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/chat";
 import { toast } from "@/hooks/use-toast";
 import { formatDate } from "@/lib/utils";
-import type { ChatMensagem } from "@/lib/api/types";
+import type { ChatMensagem, LegalAnswerResponse } from "@/lib/api/types";
 
 /** Full chat interface with session history sidebar and message thread */
 export function ChatInterface() {
@@ -45,14 +45,23 @@ export function ChatInterface() {
 
   const sendMutation = useMutation({
     mutationFn: enviarMensagem,
-    onSuccess: (data) => {
-      setSessaoId(data.sessaoId);
+    onSuccess: (data: LegalAnswerResponse) => {
+      setSessaoId(data.sessionId);
       if (sessaoId) {
         queryClient.invalidateQueries({
-          queryKey: ["chat-historico", data.sessaoId],
+          queryKey: ["chat-historico", data.sessionId],
         });
       } else {
-        setLocalMessages((prev) => [...prev, data.mensagem]);
+        // Add assistant reply to local messages (user message already added optimistically)
+        const assistantMsg: ChatMensagem = {
+          id: data.exchangeId,
+          sessaoId: data.sessionId,
+          papel: "ASSISTENTE",
+          conteudo: data.answer,
+          citacoes: data.citations,
+          criadoEm: data.metadata?.timestamp ?? new Date().toISOString(),
+        };
+        setLocalMessages((prev) => [...prev, assistantMsg]);
       }
       queryClient.invalidateQueries({ queryKey: ["chat-sessoes"] });
     },
@@ -84,7 +93,7 @@ export function ChatInterface() {
     }
 
     setInputText("");
-    sendMutation.mutate({ mensagem: texto, sessaoId });
+    sendMutation.mutate({ question: texto, sessionId: sessaoId });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -132,9 +141,9 @@ export function ChatInterface() {
                         : "text-slate-600 hover:bg-slate-100"
                     }`}
                   >
-                    <p className="truncate font-medium">{s.titulo}</p>
+                    <p className="truncate font-medium">{s.title}</p>
                     <p className="mt-0.5 text-slate-400">
-                      {formatDate(s.criadoEm)}
+                      {formatDate(s.createdAt)}
                     </p>
                   </button>
                 </li>

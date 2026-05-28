@@ -26,57 +26,111 @@ export interface LoginRequest {
   password: string;
 }
 
+// Matches backend LoginResponse record
+export interface LoginResponse {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: string;
+  expiresIn: number;
+}
+
+// Matches backend RegisterRequest record
 export interface RegisterRequest {
-  nome: string;
+  firstName: string;
+  lastName: string;
   email: string;
   password: string;
-  empresa?: string;
-  perfil: UserPerfil;
+  organizationName?: string;
 }
 
-export type UserPerfil = "HR" | "ADVOGADO" | "TRABALHADOR" | "ADMIN";
+// Matches backend RegisterResponse record (201 Created)
+export interface RegisterResponse {
+  userId: string;
+  email: string;
+  message: string;
+}
 
-export interface AuthResponse {
-  token: string;
+export interface RefreshRequest {
   refreshToken: string;
-  utilizador: Utilizador;
 }
 
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}
+
+// Local session user — populated by decoding the Keycloak JWT claims
 export interface Utilizador {
   id: string;
-  nome: string;
   email: string;
-  empresa?: string;
-  perfil: UserPerfil;
-  criadoEm: string;
+  nome: string;
 }
 
-// ─── AI Chat ──────────────────────────────────────────────────────────────────
+// ─── Legal Q&A ────────────────────────────────────────────────────────────────
 
+// Matches backend LegalQuestionRequest record
+export interface LegalQuestionRequest {
+  sessionId?: string;
+  question: string;
+}
+
+// Matches backend CitationDto record
+export interface LegalCitationDto {
+  lawNumber: string;
+  article: string;
+  articleText: string;
+  sourceUrl?: string;
+  corpusType: string;
+}
+
+export interface LegalAnswerMetadata {
+  tokensInput?: number;
+  tokensOutput?: number;
+  latencyMs?: number;
+  timestamp: string;
+}
+
+// Matches backend LegalAnswerResponse record
+export interface LegalAnswerResponse {
+  sessionId: string;
+  exchangeId: string;
+  question: string;
+  answer: string;
+  citations: LegalCitationDto[];
+  metadata: LegalAnswerMetadata;
+}
+
+// Matches backend SessionSummaryResponse record
+export interface SessionSummary {
+  id: string;
+  title: string;
+  exchangeCount: number;
+  createdAt: string;
+  updatedAt: string;
+  exchanges?: LegalAnswerResponse[];
+}
+
+// UI-level message — constructed from LegalAnswerResponse exchanges
 export interface ChatMensagem {
   id: string;
   sessaoId: string;
   papel: "UTILIZADOR" | "ASSISTENTE";
   conteudo: string;
-  citacoes?: CitacaoLegal[];
+  citacoes?: LegalCitationDto[];
   criadoEm: string;
 }
 
+// Legacy citation type — still used by contracts/compliance (not yet implemented on BE)
 export interface CitacaoLegal {
   artigo: string;
   diploma: string;
   texto: string;
   url?: string;
-}
-
-export interface ChatRequest {
-  mensagem: string;
-  sessaoId?: string;
-}
-
-export interface ChatResponse {
-  mensagem: ChatMensagem;
-  sessaoId: string;
 }
 
 // ─── Cases ────────────────────────────────────────────────────────────────────

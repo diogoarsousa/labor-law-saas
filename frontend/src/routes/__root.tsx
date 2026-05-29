@@ -10,6 +10,10 @@ import {
 
 import appCss from "../styles.css?url";
 
+// In Vite dev mode CSS files are served as JS modules for HMR.
+// Appending ?direct forces Vite to return the processed CSS content.
+const cssHref = import.meta.env.DEV ? `${appCss}?direct` : appCss;
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -84,7 +88,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     links: [
       {
         rel: "stylesheet",
-        href: appCss,
+        href: cssHref,
       },
     ],
   }),

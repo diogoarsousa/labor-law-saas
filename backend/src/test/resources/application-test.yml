@@ -4,16 +4,20 @@ spring:
 
   # Disable AI services in unit tests
   ai:
-    azure:
-      openai:
-        endpoint: https://test.openai.azure.com/
-        api-key: test-key
-        chat:
-          options:
-            deployment-name: gpt-4.1-nano
-        embedding:
-          options:
-            deployment-name: text-embedding-3-small
+    anthropic:
+      api-key: test-key
+      chat:
+        options:
+          model: claude-sonnet-4-6
+          temperature: 0.3
+          max-tokens: 4096
+    openai:
+      api-key: test-key
+      chat:
+        enabled: false
+      embedding:
+        options:
+          model: text-embedding-3-small
     vectorstore:
       pgvector:
         dimensions: 1536

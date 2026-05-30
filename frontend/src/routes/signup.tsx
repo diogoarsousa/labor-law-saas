@@ -1,9 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { useState } from "react";
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
 import { Field } from "./login";
+import { auth } from "@/lib/api";
+import { saveTokens } from "@/lib/auth";
 
 export const Route = createFileRoute("/signup")({
   component: Signup,
@@ -11,6 +14,36 @@ export const Route = createFileRoute("/signup")({
 });
 
 function Signup() {
+  const navigate = useNavigate();
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [orgName, setOrgName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (password.length < 8) {
+      setError("A palavra-passe deve ter pelo menos 8 caracteres.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await auth.register(firstName.trim(), lastName.trim(), email.trim(), password, orgName.trim() || undefined);
+      // Auto-login after registration
+      const tokens = await auth.login(email.trim(), password);
+      saveTokens(tokens);
+      navigate({ to: "/chat" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao criar conta");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[var(--color-background)]">
       <Header />
@@ -34,27 +67,65 @@ function Signup() {
                 Começa grátis. Sem cartão de crédito.
               </p>
             </div>
-            <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
-              <Field label="Nome" type="text" placeholder="Maria Silva" />
-              <Field label="Email" type="email" placeholder="o.teu@email.pt" />
-              <Field label="Palavra-passe" type="password" placeholder="Mínimo 8 caracteres" />
-              <label className="flex items-start gap-2 text-xs text-[var(--color-muted-foreground)]">
-                <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 rounded border-[var(--color-border)]" />
-                Aceito os Termos de Serviço e a Política de Privacidade.
-              </label>
+
+            {error && (
+              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="Nome"
+                  type="text"
+                  placeholder="Maria"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  required
+                />
+                <Field
+                  label="Apelido"
+                  type="text"
+                  placeholder="Silva"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  required
+                />
+              </div>
+              <Field
+                label="Email"
+                type="email"
+                placeholder="o.teu@email.pt"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+              <Field
+                label="Palavra-passe"
+                type="password"
+                placeholder="Mínimo 8 caracteres"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <Field
+                label="Empresa (opcional)"
+                type="text"
+                placeholder="Nome da organização"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+              />
               <button
                 type="submit"
-                className="glow-cta inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-coffee)] px-5 py-3 text-sm font-medium text-[var(--color-cream)]"
+                disabled={loading}
+                className="glow-cta inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-coffee)] px-5 py-3 text-sm font-medium text-[var(--color-cream)] disabled:opacity-60"
               >
-                Criar conta <ArrowRight className="h-4 w-4" />
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                {loading ? "A criar conta…" : "Criar conta"}
               </button>
             </form>
-            <div className="my-6 flex items-center gap-3 text-xs text-[var(--color-muted-foreground)]">
-              <div className="h-px flex-1 bg-[var(--color-border)]" /> ou <div className="h-px flex-1 bg-[var(--color-border)]" />
-            </div>
-            <button className="w-full rounded-full border border-[var(--color-border)] bg-[var(--color-cream)] px-5 py-3 text-sm hover:bg-[var(--color-sand)]">
-              Continuar com Google
-            </button>
+
             <p className="mt-6 text-center text-sm text-[var(--color-muted-foreground)]">
               Já tens conta?{" "}
               <Link to="/login" className="font-medium text-[var(--color-coffee)] underline-offset-4 hover:underline">

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -23,48 +23,56 @@ import {
   Moon,
   Calculator,
   FileSignature,
+  LogOut,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { legalQa, type CitationDto } from "@/lib/api";
+import { isAuthenticated, clearTokens, getRefreshToken } from "@/lib/auth";
+import { auth } from "@/lib/api";
 
-type Msg = { role: "user" | "assistant"; content: string };
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type Msg = {
+  role: "user" | "assistant";
+  content: string;
+  citations?: CitationDto[];
+};
+
 type Conversation = {
-  id: string;
+  id: string;            // backend session UUID (also used as local key)
   title: string;
   messages: Msg[];
   createdAt: number;
   updatedAt: number;
+  messagesLoaded: boolean;
 };
 
 type Settings = {
   theme: "light" | "sepia";
-  model: string;
   fontSize: "sm" | "base" | "lg";
 };
 
-const STORAGE_KEY = "dt_chat_conversations_v1";
-const ACTIVE_KEY = "dt_chat_active_v1";
+// ── Constants ─────────────────────────────────────────────────────────────────
+
 const SETTINGS_KEY = "dt_chat_settings_v1";
 
 const SUGGESTIONS = [
-  { icon: Scale, title: "Despedimento sem justa causa", prompt: "Fui despedido sem justa causa. Quais os meus direitos e que indemnização posso receber?" },
-  { icon: Clock, title: "Horas extra e descanso", prompt: "Como são calculadas as horas extraordinárias e o trabalho ao fim-de-semana?" },
-  { icon: FileText, title: "Contrato a termo", prompt: "Quais as regras e limites para contratos de trabalho a termo certo em Portugal?" },
-  { icon: AlertCircle, title: "Assédio no trabalho", prompt: "O que posso fazer se estou a ser vítima de assédio moral no local de trabalho?" },
+  { icon: Scale,       title: "Despedimento sem justa causa",  prompt: "Fui despedido sem justa causa. Quais os meus direitos e que indemnização posso receber?" },
+  { icon: Clock,       title: "Horas extra e descanso",        prompt: "Como são calculadas as horas extraordinárias e o trabalho ao fim-de-semana?" },
+  { icon: FileText,    title: "Contrato a termo",              prompt: "Quais as regras e limites para contratos de trabalho a termo certo em Portugal?" },
+  { icon: AlertCircle, title: "Assédio no trabalho",           prompt: "O que posso fazer se estou a ser vítima de assédio moral no local de trabalho?" },
 ];
 
-const MODELS = [
-  { id: "google/gemini-3-flash-preview", label: "Doutor Trabalho · Rápido" },
-  { id: "google/gemini-3-pro-preview", label: "Doutor Trabalho · Pro" },
-  { id: "openai/gpt-5.2", label: "Doutor Trabalho · GPT" },
-];
+const DEFAULT_SETTINGS: Settings = { theme: "light", fontSize: "base" };
 
-const DEFAULT_SETTINGS: Settings = {
-  theme: "light",
-  model: MODELS[0].id,
-  fontSize: "base",
-};
+// ── Route ────────────────────────────────────────────────────────────────────
 
 export const Route = createFileRoute("/chat")({
+  beforeLoad: () => {
+    if (typeof window !== "undefined" && !isAuthenticated()) {
+      throw redirect({ to: "/login" });
+    }
+  },
   head: () => ({
     meta: [
       { title: "Chat AI · Doutor Trabalho" },
@@ -74,82 +82,96 @@ export const Route = createFileRoute("/chat")({
   component: ChatPage,
 });
 
-function uid() {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-}
-
-function loadConversations(): Conversation[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as Conversation[];
-  } catch {
-    return [];
-  }
-}
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function loadSettings(): Settings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
+    return raw ? { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) } : DEFAULT_SETTINGS;
+  } catch { return DEFAULT_SETTINGS; }
 }
 
+function formatCitations(citations: CitationDto[]): string {
+  if (!citations?.length) return "";
+  const items = citations
+    .map((c) => `**${c.lawNumber}${c.article ? `, art. ${c.article}` : ""}**${c.articleText ? ` — ${c.articleText.slice(0, 120)}…` : ""}`)
+    .join("\n- ");
+  return `\n\n---\n\n**Referências legais:**\n- ${items}`;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 function ChatPage() {
+  const navigate = useNavigate();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
-
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Hydrate from localStorage
+  // Load sessions from backend on mount
   useEffect(() => {
-    const convs = loadConversations();
-    setConversations(convs);
     setSettings(loadSettings());
-    const aid = typeof window !== "undefined" ? localStorage.getItem(ACTIVE_KEY) : null;
-    if (aid && convs.some((c) => c.id === aid)) setActiveId(aid);
+    legalQa.listSessions()
+      .then((sessions) => {
+        setConversations(
+          sessions.map((s) => ({
+            id: s.id,
+            title: s.title || "Sem título",
+            messages: [],
+            createdAt: new Date(s.createdAt).getTime(),
+            updatedAt: new Date(s.updatedAt).getTime(),
+            messagesLoaded: false,
+          }))
+        );
+      })
+      .catch(() => { /* backend offline — start with empty list */ })
+      .finally(() => setSessionsLoading(false));
   }, []);
 
-  // Persist conversations
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-  }, [conversations]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (activeId) localStorage.setItem(ACTIVE_KEY, activeId);
-    else localStorage.removeItem(ACTIVE_KEY);
-  }, [activeId]);
-
+  // Persist settings
   useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  const active = useMemo(
-    () => conversations.find((c) => c.id === activeId) ?? null,
-    [conversations, activeId],
-  );
+  // Auto-scroll
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [conversations, activeId, loading]);
+
+  const active = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [conversations, activeId]);
   const messages = active?.messages ?? [];
   const hasMessages = messages.length > 0;
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, loading]);
+  // When a session is selected, lazy-load its messages from backend
+  async function selectSession(id: string) {
+    setActiveId(id);
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv || conv.messagesLoaded) return;
+    try {
+      const session = await legalQa.getSession(id);
+      const msgs: Msg[] = (session.exchanges ?? []).flatMap((ex) => [
+        { role: "user" as const, content: ex.question },
+        {
+          role: "assistant" as const,
+          content: ex.answer + formatCitations(ex.citations ?? []),
+          citations: ex.citations ?? [],
+        },
+      ]);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, messages: msgs, messagesLoaded: true } : c))
+      );
+    } catch { /* non-critical — show empty */ }
+  }
 
   function newConversation() {
     setActiveId(null);
@@ -157,128 +179,119 @@ function ChatPage() {
     setError(null);
   }
 
-  function deleteConversation(id: string) {
+  async function deleteConversation(id: string) {
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) setActiveId(null);
+    legalQa.deleteSession(id).catch(() => {}); // best-effort
   }
 
-  function clearAll() {
-    setConversations([]);
-    setActiveId(null);
+  async function renameConversation(id: string, title: string) {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title: trimmed } : c)));
+    legalQa.renameSession(id, trimmed).catch(() => {}); // best-effort
   }
 
-  function renameConversation(id: string, title: string) {
-    setConversations((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, title: title.trim() || c.title } : c)),
-    );
+  async function handleLogout() {
+    const refreshToken = getRefreshToken();
+    if (refreshToken) auth.logout(refreshToken).catch(() => {});
+    clearTokens();
+    navigate({ to: "/" });
   }
 
   async function send(text: string) {
     const content = text.trim();
     if (!content || loading) return;
     setError(null);
+    setInput("");
+    setLoading(true);
 
-    let convId = activeId;
-    let baseMessages: Msg[] = [];
+    // Optimistically add user message (or create a temporary local conversation)
+    const isNew = !activeId;
+    let localId = activeId ?? `tmp-${Date.now()}`;
 
-    if (!convId) {
-      convId = uid();
-      const conv: Conversation = {
-        id: convId,
+    if (isNew) {
+      const tempConv: Conversation = {
+        id: localId,
         title: content.slice(0, 48) + (content.length > 48 ? "…" : ""),
         messages: [{ role: "user", content }],
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        messagesLoaded: true,
       };
-      baseMessages = conv.messages;
-      setConversations((prev) => [conv, ...prev]);
-      setActiveId(convId);
+      setConversations((prev) => [tempConv, ...prev]);
+      setActiveId(localId);
     } else {
-      baseMessages = [...(active?.messages ?? []), { role: "user", content }];
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === convId ? { ...c, messages: baseMessages, updatedAt: Date.now() } : c,
-        ),
+          c.id === localId
+            ? { ...c, messages: [...c.messages, { role: "user", content }], updatedAt: Date.now() }
+            : c
+        )
       );
     }
 
-    setInput("");
-    setLoading(true);
+    // Placeholder for assistant response
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === localId
+          ? { ...c, messages: [...c.messages, { role: "assistant", content: "" }] }
+          : c
+      )
+    );
 
     try {
-      const resp = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: baseMessages, model: settings.model }),
-      });
+      const sessionId = isNew ? null : activeId;
+      const response = await legalQa.ask(sessionId, content);
+      const backendId = response.sessionId;
+      const fullAnswer = response.answer + formatCitations(response.citations ?? []);
 
-      if (!resp.ok || !resp.body) {
-        const data = await resp.json().catch(() => ({ error: "Erro ao contactar o servidor" }));
-        throw new Error(data.error || "Erro desconhecido");
+      // Typewriter animation
+      for (let i = 4; i <= fullAnswer.length; i += 4) {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== localId) return c;
+            const msgs = c.messages.slice();
+            msgs[msgs.length - 1] = { role: "assistant", content: fullAnswer.slice(0, i) };
+            return { ...c, messages: msgs };
+          })
+        );
+        await new Promise((r) => setTimeout(r, 12));
       }
 
-      // Append placeholder assistant
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId
-            ? { ...c, messages: [...c.messages, { role: "assistant", content: "" }] }
-            : c,
-        ),
-      );
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let assistant = "";
-
-      let done = false;
-      while (!done) {
-        const { done: d, value } = await reader.read();
-        if (d) break;
-        buffer += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf("\n")) !== -1) {
-          let line = buffer.slice(0, nl);
-          buffer = buffer.slice(nl + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (!line || line.startsWith(":") || !line.startsWith("data: ")) continue;
-          const json = line.slice(6).trim();
-          if (json === "[DONE]") {
-            done = true;
-            break;
-          }
-          try {
-            const parsed = JSON.parse(json);
-            const delta = parsed.choices?.[0]?.delta?.content as string | undefined;
-            if (delta) {
-              assistant += delta;
-              setConversations((prev) =>
-                prev.map((c) => {
-                  if (c.id !== convId) return c;
-                  const msgs = c.messages.slice();
-                  msgs[msgs.length - 1] = { role: "assistant", content: assistant };
-                  return { ...c, messages: msgs, updatedAt: Date.now() };
-                }),
-              );
-            }
-          } catch {
-            buffer = line + "\n" + buffer;
-            break;
-          }
-        }
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro desconhecido");
-      // Remove empty assistant placeholder if any
+      // Finalise: rename temp ID to backend session ID, set full answer
       setConversations((prev) =>
         prev.map((c) => {
-          if (c.id !== convId) return c;
+          if (c.id !== localId) return c;
+          const msgs = c.messages.slice();
+          msgs[msgs.length - 1] = {
+            role: "assistant",
+            content: fullAnswer,
+            citations: response.citations ?? [],
+          };
+          return {
+            ...c,
+            id: backendId,
+            messages: msgs,
+            messagesLoaded: true,
+            updatedAt: Date.now(),
+          };
+        })
+      );
+      if (isNew) setActiveId(backendId);
+
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro desconhecido");
+      // Remove empty placeholder
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== localId) return c;
           const last = c.messages[c.messages.length - 1];
-          if (last && last.role === "assistant" && last.content === "") {
+          if (last?.role === "assistant" && last.content === "") {
             return { ...c, messages: c.messages.slice(0, -1) };
           }
           return c;
-        }),
+        })
       );
     } finally {
       setLoading(false);
@@ -294,7 +307,8 @@ function ChatPage() {
 
   const bgClass = settings.theme === "sepia" ? "bg-[var(--color-sand)]" : "bg-[var(--color-cream)]";
   const fontClass =
-    settings.fontSize === "sm" ? "text-sm" : settings.fontSize === "lg" ? "text-base sm:text-lg" : "text-sm sm:text-base";
+    settings.fontSize === "sm" ? "text-sm" :
+    settings.fontSize === "lg" ? "text-base sm:text-lg" : "text-sm sm:text-base";
 
   return (
     <div className={`flex h-screen w-full overflow-hidden ${bgClass}`}>
@@ -350,13 +364,15 @@ function ChatPage() {
               </Link>
             </div>
 
-
-
             <div className="mt-4 px-3 text-xs font-medium uppercase tracking-wider text-[var(--color-coffee)]/50">
               Histórico
             </div>
             <div className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
-              {conversations.length === 0 ? (
+              {sessionsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-4 w-4 animate-spin text-[var(--color-coffee)]/40" />
+                </div>
+              ) : conversations.length === 0 ? (
                 <p className="px-3 py-6 text-xs text-[var(--color-coffee)]/50">
                   Ainda sem conversas. Comece já.
                 </p>
@@ -385,55 +401,20 @@ function ChatPage() {
                                   value={editingTitle}
                                   onChange={(e) => setEditingTitle(e.target.value)}
                                   onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      renameConversation(c.id, editingTitle);
-                                      setEditingId(null);
-                                    } else if (e.key === "Escape") setEditingId(null);
+                                    if (e.key === "Enter") { renameConversation(c.id, editingTitle); setEditingId(null); }
+                                    else if (e.key === "Escape") setEditingId(null);
                                   }}
                                   className="min-w-0 flex-1 rounded bg-[var(--color-cream)] px-1.5 py-0.5 text-sm outline-none ring-1 ring-[var(--color-beige-deep)]"
                                 />
-                                <button
-                                  onClick={() => {
-                                    renameConversation(c.id, editingTitle);
-                                    setEditingId(null);
-                                  }}
-                                  className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/70 hover:bg-[var(--color-beige)]"
-                                >
-                                  <Check className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => setEditingId(null)}
-                                  className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/70 hover:bg-[var(--color-beige)]"
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
+                                <button onClick={() => { renameConversation(c.id, editingTitle); setEditingId(null); }} className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/70 hover:bg-[var(--color-beige)]"><Check className="h-3.5 w-3.5" /></button>
+                                <button onClick={() => setEditingId(null)} className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/70 hover:bg-[var(--color-beige)]"><X className="h-3.5 w-3.5" /></button>
                               </>
                             ) : (
                               <>
-                                <button
-                                  onClick={() => setActiveId(c.id)}
-                                  className="min-w-0 flex-1 truncate text-left text-sm"
-                                >
-                                  {c.title}
-                                </button>
+                                <button onClick={() => selectSession(c.id)} className="min-w-0 flex-1 truncate text-left text-sm">{c.title}</button>
                                 <div className="flex items-center opacity-0 transition group-hover:opacity-100">
-                                  <button
-                                    onClick={() => {
-                                      setEditingId(c.id);
-                                      setEditingTitle(c.title);
-                                    }}
-                                    className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/60 hover:bg-[var(--color-beige)]"
-                                    aria-label="Renomear"
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                  </button>
-                                  <button
-                                    onClick={() => deleteConversation(c.id)}
-                                    className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/60 hover:bg-destructive/10 hover:text-destructive"
-                                    aria-label="Apagar"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
+                                  <button onClick={() => { setEditingId(c.id); setEditingTitle(c.title); }} className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/60 hover:bg-[var(--color-beige)]" aria-label="Renomear"><Pencil className="h-3 w-3" /></button>
+                                  <button onClick={() => deleteConversation(c.id)} className="grid h-6 w-6 place-items-center rounded text-[var(--color-coffee)]/60 hover:bg-destructive/10 hover:text-destructive" aria-label="Apagar"><Trash2 className="h-3 w-3" /></button>
                                 </div>
                               </>
                             )}
@@ -445,12 +426,18 @@ function ChatPage() {
               )}
             </div>
 
-            <div className="border-t border-[var(--color-beige-deep)] p-3">
+            <div className="border-t border-[var(--color-beige-deep)] p-3 space-y-1">
               <button
                 onClick={() => setSettingsOpen(true)}
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-[var(--color-coffee)] transition hover:bg-[var(--color-beige)]/50"
               >
                 <SettingsIcon className="h-4 w-4" /> Definições
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-[var(--color-coffee)]/70 transition hover:bg-[var(--color-beige)]/50"
+              >
+                <LogOut className="h-4 w-4" /> Sair
               </button>
             </div>
           </motion.aside>
@@ -463,24 +450,16 @@ function ChatPage() {
         <div className="flex items-center justify-between gap-2 px-3 py-2.5 sm:px-4">
           <div className="flex items-center gap-2">
             {!sidebarOpen && (
-              <button
-                onClick={() => setSidebarOpen(true)}
-                className="grid h-9 w-9 place-items-center rounded-lg text-[var(--color-coffee)]/70 transition hover:bg-[var(--color-beige)]/60"
-                aria-label="Abrir sidebar"
-              >
+              <button onClick={() => setSidebarOpen(true)} className="grid h-9 w-9 place-items-center rounded-lg text-[var(--color-coffee)]/70 transition hover:bg-[var(--color-beige)]/60" aria-label="Abrir sidebar">
                 <PanelLeft className="h-4 w-4" />
               </button>
             )}
             <div className="flex items-center gap-2 rounded-full border border-[var(--color-beige-deep)] bg-[var(--color-cream)]/70 px-3 py-1 text-xs text-[var(--color-coffee)]/80">
               <Sparkles className="h-3 w-3" />
-              {MODELS.find((m) => m.id === settings.model)?.label ?? "Doutor Trabalho"}
+              Doutor Trabalho AI
             </div>
           </div>
-          <button
-            onClick={newConversation}
-            className="grid h-9 w-9 place-items-center rounded-lg text-[var(--color-coffee)]/70 transition hover:bg-[var(--color-beige)]/60 sm:hidden"
-            aria-label="Nova conversa"
-          >
+          <button onClick={newConversation} className="grid h-9 w-9 place-items-center rounded-lg text-[var(--color-coffee)]/70 transition hover:bg-[var(--color-beige)]/60 sm:hidden" aria-label="Nova conversa">
             <Plus className="h-4 w-4" />
           </button>
         </div>
@@ -501,10 +480,8 @@ function ChatPage() {
                 Como posso ajudá-lo hoje?
               </h1>
               <p className="mt-3 max-w-xl text-[var(--color-coffee)]/70">
-                Pergunte qualquer coisa sobre Direito do Trabalho em Portugal. Respostas claras,
-                com base no Código do Trabalho.
+                Pergunte qualquer coisa sobre Direito do Trabalho em Portugal. Respostas claras, com base no Código do Trabalho.
               </p>
-
               <div className="mt-10 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
                 {SUGGESTIONS.map((s, i) => (
                   <motion.button
@@ -550,11 +527,7 @@ function ChatPage() {
                     >
                       {m.role === "assistant" ? (
                         <div className="prose prose-sm max-w-none prose-headings:font-serif prose-headings:text-[var(--color-coffee)] prose-p:text-[var(--color-coffee)]/90 prose-strong:text-[var(--color-coffee)] prose-li:text-[var(--color-coffee)]/90 prose-a:text-[var(--color-coffee)]">
-                          {m.content ? (
-                            <ReactMarkdown>{m.content}</ReactMarkdown>
-                          ) : (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          )}
+                          {m.content ? <ReactMarkdown>{m.content}</ReactMarkdown> : <Loader2 className="h-4 w-4 animate-spin" />}
                         </div>
                       ) : (
                         <p className="whitespace-pre-wrap">{m.content}</p>
@@ -623,45 +596,17 @@ function ChatPage() {
                   <SettingsIcon className="h-4 w-4 text-[var(--color-coffee)]" />
                   <h2 className="font-serif text-xl text-[var(--color-coffee)]">Definições</h2>
                 </div>
-                <button
-                  onClick={() => setSettingsOpen(false)}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-[var(--color-coffee)]/60 transition hover:bg-[var(--color-beige)]/60"
-                >
+                <button onClick={() => setSettingsOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-[var(--color-coffee)]/60 transition hover:bg-[var(--color-beige)]/60">
                   <X className="h-4 w-4" />
                 </button>
               </div>
               <div className="space-y-6 px-5 py-5">
                 <Section label="Tema">
                   <div className="grid grid-cols-2 gap-2">
-                    <ThemeOption
-                      active={settings.theme === "light"}
-                      onClick={() => setSettings((s) => ({ ...s, theme: "light" }))}
-                      icon={<Sun className="h-4 w-4" />}
-                      label="Claro"
-                    />
-                    <ThemeOption
-                      active={settings.theme === "sepia"}
-                      onClick={() => setSettings((s) => ({ ...s, theme: "sepia" }))}
-                      icon={<Moon className="h-4 w-4" />}
-                      label="Sépia"
-                    />
+                    <ThemeOption active={settings.theme === "light"} onClick={() => setSettings((s) => ({ ...s, theme: "light" }))} icon={<Sun className="h-4 w-4" />} label="Claro" />
+                    <ThemeOption active={settings.theme === "sepia"} onClick={() => setSettings((s) => ({ ...s, theme: "sepia" }))} icon={<Moon className="h-4 w-4" />} label="Sépia" />
                   </div>
                 </Section>
-
-                <Section label="Modelo">
-                  <select
-                    value={settings.model}
-                    onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}
-                    className="w-full rounded-xl border border-[var(--color-beige-deep)] bg-[var(--color-sand)] px-3 py-2 text-sm text-[var(--color-coffee)] outline-none focus:ring-2 focus:ring-[var(--color-stone)]"
-                  >
-                    {MODELS.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </Section>
-
                 <Section label="Tamanho do texto">
                   <div className="grid grid-cols-3 gap-2">
                     {(["sm", "base", "lg"] as const).map((sz) => (
@@ -679,17 +624,6 @@ function ChatPage() {
                     ))}
                   </div>
                 </Section>
-
-                <Section label="Dados">
-                  <button
-                    onClick={() => {
-                      if (confirm("Apagar todas as conversas? Esta ação é irreversível.")) clearAll();
-                    }}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive transition hover:bg-destructive/10"
-                  >
-                    <Trash2 className="h-4 w-4" /> Apagar todas as conversas
-                  </button>
-                </Section>
               </div>
             </motion.div>
           </motion.div>
@@ -702,25 +636,13 @@ function ChatPage() {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-coffee)]/60">
-        {label}
-      </div>
+      <div className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-coffee)]/60">{label}</div>
       {children}
     </div>
   );
 }
 
-function ThemeOption({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
+function ThemeOption({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
   return (
     <button
       onClick={onClick}

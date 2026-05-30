@@ -1,8 +1,11 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { useState } from "react";
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
+import { auth } from "@/lib/api";
+import { saveTokens } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
   component: Login,
@@ -10,6 +13,27 @@ export const Route = createFileRoute("/login")({
 });
 
 function Login() {
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const tokens = await auth.login(email.trim(), password);
+      saveTokens(tokens);
+      navigate({ to: "/chat" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao autenticar");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[var(--color-background)]">
       <Header />
@@ -33,31 +57,40 @@ function Login() {
                 Entra na tua conta Doutor Trabalho
               </p>
             </div>
-            <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
-              <Field label="Email" type="email" placeholder="o.teu@email.pt" />
-              <Field label="Palavra-passe" type="password" placeholder="••••••••" />
-              <div className="flex items-center justify-between text-xs">
-                <label className="flex items-center gap-2 text-[var(--color-muted-foreground)]">
-                  <input type="checkbox" className="h-3.5 w-3.5 rounded border-[var(--color-border)]" />
-                  Lembrar-me
-                </label>
-                <a href="#" className="text-[var(--color-coffee)] underline-offset-4 hover:underline">
-                  Esqueci-me
-                </a>
+
+            {error && (
+              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {error}
               </div>
+            )}
+
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <Field
+                label="Email"
+                type="email"
+                placeholder="o.teu@email.pt"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+              <Field
+                label="Palavra-passe"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
               <button
                 type="submit"
-                className="glow-cta inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-coffee)] px-5 py-3 text-sm font-medium text-[var(--color-cream)]"
+                disabled={loading}
+                className="glow-cta inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--color-coffee)] px-5 py-3 text-sm font-medium text-[var(--color-cream)] disabled:opacity-60"
               >
-                Entrar <ArrowRight className="h-4 w-4" />
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                {loading ? "A entrar…" : "Entrar"}
               </button>
             </form>
-            <div className="my-6 flex items-center gap-3 text-xs text-[var(--color-muted-foreground)]">
-              <div className="h-px flex-1 bg-[var(--color-border)]" /> ou <div className="h-px flex-1 bg-[var(--color-border)]" />
-            </div>
-            <button className="w-full rounded-full border border-[var(--color-border)] bg-[var(--color-cream)] px-5 py-3 text-sm hover:bg-[var(--color-sand)]">
-              Continuar com Google
-            </button>
+
             <p className="mt-6 text-center text-sm text-[var(--color-muted-foreground)]">
               Ainda não tens conta?{" "}
               <Link to="/signup" className="font-medium text-[var(--color-coffee)] underline-offset-4 hover:underline">
@@ -72,7 +105,10 @@ function Login() {
   );
 }
 
-export function Field({ label, ...props }: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+export function Field({
+  label,
+  ...props
+}: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs uppercase tracking-[0.16em] text-[var(--color-muted-foreground)]">
